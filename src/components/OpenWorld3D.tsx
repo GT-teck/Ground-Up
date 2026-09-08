@@ -1489,10 +1489,10 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
           }
 
           // Camera-Relative Movement:
-          // Pushing joystick forward moves character in the direction camera yaw is facing!
+          // Pushing joystick forward moves character in camera look direction; left/right moves horizontally relative to view
           const camYaw = camAngleYaw.current;
-          const moveX = Math.sin(camYaw) * inputZ + Math.cos(camYaw) * inputX;
-          const moveZ = Math.cos(camYaw) * inputZ - Math.sin(camYaw) * inputX;
+          const moveX = Math.sin(camYaw) * inputZ - Math.cos(camYaw) * inputX;
+          const moveZ = Math.cos(camYaw) * inputZ + Math.sin(camYaw) * inputX;
 
           const targetAngle = Math.atan2(moveX, moveZ);
           let angleDiff = (targetAngle - playerAngle.current) % (Math.PI * 2);
