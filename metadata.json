@@ -1,0 +1,7 @@
+{
+  "name": "Ground Up",
+  "description": "Open world mechanic & driving game where you can physically walk around your garage and town, scout the junkyard on foot, and drive cars to speed shops and buyers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
