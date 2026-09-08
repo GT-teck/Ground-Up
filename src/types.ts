@@ -49,17 +49,68 @@ export interface LeaderboardEntry {
 export type CharacterGender = 'male' | 'female' | 'unisex';
 export type CharacterBodyType = 'athletic' | 'muscular' | 'slim' | 'heavy';
 export type CharacterRace = 'fair' | 'tan' | 'warm_brown' | 'deep_bronze' | 'golden_fair';
-export type CharacterHairstyle = 'buzz' | 'side_part' | 'quiff' | 'ponytail' | 'curly_fade' | 'wavy_long' | 'bald';
-export type CharacterHairColor = 'black' | 'dark_brown' | 'chestnut' | 'blonde' | 'auburn' | 'silver' | 'electric_blue';
-export type CharacterAccessory = 'mechanic_cap' | 'safety_goggles' | 'racing_shades' | 'aviator_glasses' | 'bandana' | 'tool_belt' | 'mechanic_gloves' | 'none';
-export type CharacterFacialHair = 'clean' | 'stubble' | 'beard' | 'goatee' | 'mustache';
-export type CharacterClothing = 'mechanic_overalls' | 'leather_jacket' | 'racing_hoodie' | 'tuner_tshirt';
+export type CharacterEyeColor = 'brown' | 'hazel' | 'blue' | 'green' | 'gray' | 'amber';
+export type CharacterSkinDetail = 'clean' | 'tattoos' | 'grease_smudge' | 'freckles';
+export type CharacterHairstyle =
+  | 'quiff'
+  | 'side_part'
+  | 'curly_fade'
+  | 'ponytail'
+  | 'wavy_long'
+  | 'buzz'
+  | 'dreadlocks'
+  | 'undercut'
+  | 'bob_cut'
+  | 'afro_taper'
+  | 'bald';
+export type CharacterHairColor =
+  | 'black'
+  | 'dark_brown'
+  | 'chestnut'
+  | 'blonde'
+  | 'auburn'
+  | 'silver'
+  | 'electric_blue'
+  | 'neon_pink'
+  | 'acid_green'
+  | 'purple';
+export type CharacterAccessory =
+  | 'mechanic_cap'
+  | 'safety_goggles'
+  | 'racing_shades'
+  | 'aviator_glasses'
+  | 'bandana'
+  | 'tool_belt'
+  | 'mechanic_gloves'
+  | 'headphones'
+  | 'chain_necklace'
+  | 'face_mask'
+  | 'none';
+export type CharacterFacialHair =
+  | 'clean'
+  | 'stubble'
+  | 'beard'
+  | 'goatee'
+  | 'mustache'
+  | 'horseshoe'
+  | 'van_dyke';
+export type CharacterClothing =
+  | 'mechanic_overalls'
+  | 'leather_jacket'
+  | 'racing_hoodie'
+  | 'tuner_tshirt'
+  | 'racing_suit'
+  | 'utility_vest';
+
+export type CharacterPreviewPose = 'hero' | 'inspect' | 'walk';
 
 export interface CharacterCustomization {
   name: string;
   gender: CharacterGender;
   race: CharacterRace;
   bodyType: CharacterBodyType;
+  eyeColor?: CharacterEyeColor;
+  skinDetail?: CharacterSkinDetail;
   hairStyle: CharacterHairstyle;
   hairColor: CharacterHairColor;
   facialHair: CharacterFacialHair;
