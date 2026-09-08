@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CharacterCustomization, CharacterPreviewPose } from '../types';
 import { createHumanCharacter, CharacterRig } from '../utils/characterModel';
-import { Eye, User, Shirt, Play, Pause, Sparkles } from 'lucide-react';
+import { Eye, User, Shirt, Play, Pause, Sparkles, RefreshCw } from 'lucide-react';
 import { soundFx } from '../utils/audio';
 
 export type ZoomTarget = 'full' | 'torso' | 'face';
@@ -19,6 +19,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
   initialPose = 'hero',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const rigRef = useRef<CharacterRig | null>(null);
   const rotationYRef = useRef<number>(0);
   const isDraggingRef = useRef<boolean>(false);
@@ -26,14 +27,19 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
 
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget>('full');
   const [pose, setPoseState] = useState<CharacterPreviewPose>(initialPose);
+  const poseRef = useRef<CharacterPreviewPose>(initialPose);
+  poseRef.current = pose;
+
   const [isAutoRotating, setIsAutoRotating] = useState<boolean>(true);
+  const isAutoRotatingRef = useRef<boolean>(true);
+  isAutoRotatingRef.current = isAutoRotating;
 
   // References for camera target and position lerping
   const targetCamPos = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.15, 3.4));
   const targetLookAt = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.05, 0));
   const currentLookAt = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.05, 0));
 
-  // Update target camera positions when zoom changes
+  // Update target camera positions when zoom preset changes
   useEffect(() => {
     if (zoomTarget === 'face') {
       targetCamPos.current.set(0, 1.62, 1.05);
@@ -42,7 +48,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
       targetCamPos.current.set(0, 1.35, 1.9);
       targetLookAt.current.set(0, 1.25, 0);
     } else {
-      // Full body
+      // Full body view
       targetCamPos.current.set(0, 1.15, 3.3);
       targetLookAt.current.set(0, 1.02, 0);
     }
@@ -55,36 +61,38 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     }
   }, [pose]);
 
+  // 1. Initialize Scene, Camera, Renderer and Render Loop ONCE
   useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
     const width = container.clientWidth || 300;
     const height = container.clientHeight || 300;
 
-    // 1. Scene & Camera
+    // Scene & Camera
     const scene = new THREE.Scene();
     scene.background = null;
+    sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 50);
     camera.position.copy(targetCamPos.current);
     camera.lookAt(targetLookAt.current);
 
-    // 2. Renderer with Soft Shadows
+    // High Performance WebGLRenderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1.08;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    // 3. Lighting (Warm studio automotive garage lights)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // Warm Studio Lighting (Automotive Garage Key & Fill)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffedd5, 1.8);
+    const keyLight = new THREE.DirectionalLight(0xffedd5, 2.0);
     keyLight.position.set(3, 4, 3);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.width = 1024;
@@ -92,25 +100,30 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     keyLight.shadow.bias = -0.001;
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.85);
+    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.95);
     fillLight.position.set(-3, 2, 2);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight(0xf59e0b, 1.4);
+    const rimLight = new THREE.DirectionalLight(0xf59e0b, 1.5);
     rimLight.position.set(0, 3.5, -3);
     scene.add(rimLight);
+
+    // Front portrait fill light for clear face and eye reflections
+    const portraitLight = new THREE.DirectionalLight(0xfff7ed, 0.85);
+    portraitLight.position.set(0.5, 1.65, 2.5);
+    scene.add(portraitLight);
 
     // Soft ground glow
     const groundLight = new THREE.PointLight(0xf97316, 0.6, 6);
     groundLight.position.set(0, 0.2, 0);
     scene.add(groundLight);
 
-    // Floor pedestal / circular spotlight shadow
+    // Floor pedestal with chamfered rim
     const pedestal = new THREE.Mesh(
       new THREE.CylinderGeometry(0.85, 0.95, 0.06, 32),
       new THREE.MeshStandardMaterial({
         color: 0x18181b,
-        metalness: 0.7,
+        metalness: 0.75,
         roughness: 0.35,
       })
     );
@@ -118,7 +131,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     pedestal.receiveShadow = true;
     scene.add(pedestal);
 
-    // Glowing rim on pedestal
+    // Glowing amber pedestal ring
     const pedestalRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.88, 0.015, 8, 32),
       new THREE.MeshBasicMaterial({ color: 0xf59e0b })
@@ -126,14 +139,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     pedestalRing.rotation.x = Math.PI / 2;
     scene.add(pedestalRing);
 
-    // 4. Generate High-Quality Human Character Rig
-    const rig = createHumanCharacter(character);
-    rigRef.current = rig;
-    rig.setPose(pose);
-    rig.group.position.set(0, 0, 0);
-    scene.add(rig.group);
-
-    // 5. Interactive Drag to Rotate
+    // Interactive Drag to Rotate
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       isDraggingRef.current = true;
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
@@ -159,7 +165,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     window.addEventListener('touchmove', handlePointerMove, { passive: true });
     window.addEventListener('touchend', handlePointerUp);
 
-    // Resize observer
+    // Resize Handler
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -171,7 +177,7 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // 6. Animation Loop with smooth camera framing
+    // Animation & Turntable Loop
     let animId: number;
     let lastTime = performance.now();
 
@@ -181,8 +187,8 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
 
-      // Auto turntable rotation
-      if (isAutoRotating && !isDraggingRef.current) {
+      // Auto turntable rotation if idle
+      if (isAutoRotatingRef.current && !isDraggingRef.current) {
         rotationYRef.current += dt * 0.22;
       }
 
@@ -193,7 +199,8 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
 
       if (rigRef.current) {
         rigRef.current.group.rotation.y = rotationYRef.current;
-        rigRef.current.updateAnimation(dt, false, false);
+        const isMoving = poseRef.current === 'walk';
+        rigRef.current.updateAnimation(dt, isMoving, false);
       }
 
       renderer.render(scene, camera);
@@ -213,13 +220,36 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
 
       if (rigRef.current) {
         rigRef.current.dispose();
+        rigRef.current = null;
       }
       renderer.dispose();
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
+      sceneRef.current = null;
     };
-  }, [character, isAutoRotating]);
+  }, []);
+
+  // 2. Seamless Character Rig Update whenever ANY Option Changes
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // Clean up previous rig instance safely
+    if (rigRef.current) {
+      scene.remove(rigRef.current.group);
+      rigRef.current.dispose();
+      rigRef.current = null;
+    }
+
+    // Instantiate new custom humanoid character rig
+    const newRig = createHumanCharacter(character);
+    rigRef.current = newRig;
+    newRig.setPose(poseRef.current);
+    newRig.group.position.set(0, 0, 0);
+    newRig.group.rotation.y = rotationYRef.current;
+    scene.add(newRig.group);
+  }, [character]);
 
   return (
     <div className="relative w-full h-full flex items-center justify-center select-none overflow-hidden group">
@@ -282,6 +312,17 @@ export const CharacterPreviewCanvas: React.FC<CharacterPreviewCanvasProps> = ({
 
       {/* Floating Pose Switcher & Turntable Toggle */}
       <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-black/70 backdrop-blur-md p-1 rounded-xl border border-zinc-800 shadow-lg">
+        <button
+          onClick={() => {
+            soundFx.playClick();
+            rotationYRef.current = 0;
+          }}
+          className="p-1.5 rounded-lg text-xs text-zinc-400 hover:text-amber-400 hover:bg-zinc-800/80 transition-colors cursor-pointer"
+          title="Reset front orientation"
+        >
+          <RefreshCw size={13} />
+        </button>
+
         <button
           onClick={() => {
             soundFx.playClick();

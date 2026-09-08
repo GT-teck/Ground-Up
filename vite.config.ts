@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    assetsInclude: ['**/*.glb'],
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
