@@ -20,7 +20,7 @@ import {
   Sparkles,
   Car,
 } from 'lucide-react';
-import { CarPart, WorkstationType } from '../types';
+import { CarPart, WorkstationType, CharacterCustomization } from '../types';
 import { INITIAL_CAR_PARTS, StorePartItem, JunkyardBeater } from '../data/partsData';
 import { OpenWorld3D } from './OpenWorld3D';
 import { WorkstationsModal } from './WorkstationsModal';
@@ -30,11 +30,13 @@ import { soundFx } from '../utils/audio';
 interface WorkshopViewProps {
   onBackToMenu: () => void;
   garageName?: string;
+  character?: CharacterCustomization;
 }
 
 export const WorkshopView: React.FC<WorkshopViewProps> = ({
   onBackToMenu,
   garageName = 'Rust Valley Restorations',
+  character,
 }) => {
   const [cash, setCash] = useState<number>(142800);
   const [parts, setParts] = useState<CarPart[]>(INITIAL_CAR_PARTS);
@@ -206,6 +208,7 @@ export const WorkshopView: React.FC<WorkshopViewProps> = ({
           onOpenStation={(station) => setActiveStation(station)}
           onOpenMapShop={handleOpenMapShop}
           garageName={garageName}
+          character={character}
         />
       </div>
 

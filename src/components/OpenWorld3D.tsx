@@ -28,8 +28,9 @@ import {
   Layers,
   Fuel,
 } from 'lucide-react';
-import { CarPart, WorkstationType, CameraPerspective, PlayerControlMode } from '../types';
+import { CarPart, WorkstationType, CameraPerspective, PlayerControlMode, CharacterCustomization } from '../types';
 import { soundFx } from '../utils/audio';
+import { createHumanCharacter, CharacterRig, DEFAULT_CHARACTER } from '../utils/characterModel';
 
 interface OpenWorld3DProps {
   parts: CarPart[];
@@ -37,6 +38,7 @@ interface OpenWorld3DProps {
   onOpenStation: (station: WorkstationType) => void;
   onOpenMapShop: (tab: 'junkyard' | 'parts_store' | 'tire_shop' | 'buyers') => void;
   garageName: string;
+  character?: CharacterCustomization;
 }
 
 interface WorldLocation {
@@ -203,6 +205,7 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
   onOpenStation,
   onOpenMapShop,
   garageName,
+  character,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -267,6 +270,7 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const carMeshRef = useRef<THREE.Group | null>(null);
   const playerMeshRef = useRef<THREE.Group | null>(null);
+  const playerRigRef = useRef<CharacterRig | null>(null);
   const wheelsRef = useRef<THREE.Mesh[]>([]);
   const brakeLightsRef = useRef<THREE.Mesh[]>([]);
   const flameMeshRef = useRef<THREE.Mesh | null>(null);
@@ -1271,36 +1275,14 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
 
     scene.add(carGroup);
 
-    // 10. CREATE 3D MECHANIC ON-FOOT AVATAR
-    const playerGroup = new THREE.Group();
-    playerMeshRef.current = playerGroup;
-    playerGroup.position.copy(playerPos.current);
-
-    // Mechanic Work Coveralls
-    const pTorso = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.32, 0.26, 0.85, 10),
-      new THREE.MeshStandardMaterial({ color: 0x0369a1, roughness: 0.65 })
-    );
-    pTorso.position.y = 0.82;
-    pTorso.castShadow = true;
-    playerGroup.add(pTorso);
-
-    const pHead = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xf5d0b5, roughness: 0.8 })
-    );
-    pHead.position.y = 1.4;
-    playerGroup.add(pHead);
-
-    // Mechanic Cap
-    const capVisor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 0.05, 0.22),
-      new THREE.MeshStandardMaterial({ color: 0xd97706 })
-    );
-    capVisor.position.set(0, 1.5, 0.16);
-    playerGroup.add(capVisor);
-
-    scene.add(playerGroup);
+    // 10. CREATE 3D REALISTIC HUMAN AVATAR (CUSTOMIZED RIG)
+    const activeCharConfig = character || DEFAULT_CHARACTER;
+    const humanRig = createHumanCharacter(activeCharConfig);
+    playerRigRef.current = humanRig;
+    playerMeshRef.current = humanRig.group;
+    humanRig.group.position.copy(playerPos.current);
+    humanRig.group.rotation.y = playerAngle.current;
+    scene.add(humanRig.group);
 
     // Handle Window Resizing
     const handleResize = () => {
@@ -1513,6 +1495,11 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
           playerMeshRef.current.rotation.y = playerAngle.current;
         }
 
+        // Update articulated human limb animation (natural walking, sprinting, or idle breathing)
+        if (playerRigRef.current) {
+          playerRigRef.current.updateAnimation(dt, isMoving, inputRef.current.sprint || mag > 0.82);
+        }
+
         // Camera for On-Foot (FPS vs 3rd Person, rotated by right-side swipe look)
         if (cameraRef.current) {
           if (perspective === 'fps') {
@@ -1646,12 +1633,15 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
+      if (playerRigRef.current) {
+        playerRigRef.current.dispose();
+      }
       if (rendererRef.current && rendererRef.current.domElement) {
         rendererRef.current.domElement.remove();
         rendererRef.current.dispose();
       }
     };
-  }, [controlMode, perspective, toggleVehicle, onOpenStation, onOpenMapShop, garageName]);
+  }, [controlMode, perspective, toggleVehicle, onOpenStation, onOpenMapShop, garageName, character]);
 
   // Touch Virtual Controls Helper
   const setTouchInput = (key: keyof typeof inputRef.current, state: boolean) => {

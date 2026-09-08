@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Screen } from './types';
+import { Screen, CharacterCustomization } from './types';
 import { MobileFrame } from './components/MobileFrame';
 import { MainMenu } from './components/MainMenu';
 import { StartMenu } from './components/StartMenu';
@@ -14,6 +14,7 @@ import { LeaderboardMenu } from './components/LeaderboardMenu';
 import { QuitModal } from './components/QuitModal';
 import { WorkshopView } from './components/WorkshopView';
 import { soundFx } from './utils/audio';
+import { DEFAULT_CHARACTER } from './utils/characterModel';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('main');
@@ -21,6 +22,7 @@ export default function App() {
   const [isQuitModalOpen, setIsQuitModalOpen] = useState<boolean>(false);
   const [isGameExited, setIsGameExited] = useState<boolean>(false);
   const [garageName, setGarageName] = useState<string>('Rust Valley Restorations');
+  const [activeCharacter, setActiveCharacter] = useState<CharacterCustomization>(DEFAULT_CHARACTER);
 
   const handleToggleSound = () => {
     const nextState = !soundEnabled;
@@ -46,8 +48,9 @@ export default function App() {
     setScreen('main');
   };
 
-  const handleEnterGarage = (customName?: string) => {
+  const handleEnterGarage = (customName?: string, character?: CharacterCustomization) => {
     if (customName) setGarageName(customName);
+    if (character) setActiveCharacter(character);
     setScreen('garage');
   };
 
@@ -100,6 +103,7 @@ export default function App() {
             <WorkshopView
               onBackToMenu={() => setScreen('main')}
               garageName={garageName}
+              character={activeCharacter}
             />
           </motion.div>
         )}

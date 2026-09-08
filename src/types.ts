@@ -46,6 +46,29 @@ export interface LeaderboardEntry {
   isCurrentUser?: boolean;
 }
 
+export type CharacterGender = 'male' | 'female' | 'unisex';
+export type CharacterBodyType = 'athletic' | 'muscular' | 'slim' | 'heavy';
+export type CharacterRace = 'fair' | 'tan' | 'warm_brown' | 'deep_bronze' | 'golden_fair';
+export type CharacterHairstyle = 'buzz' | 'side_part' | 'quiff' | 'ponytail' | 'curly_fade' | 'wavy_long' | 'bald';
+export type CharacterHairColor = 'black' | 'dark_brown' | 'chestnut' | 'blonde' | 'auburn' | 'silver' | 'electric_blue';
+export type CharacterAccessory = 'mechanic_cap' | 'safety_goggles' | 'racing_shades' | 'aviator_glasses' | 'bandana' | 'tool_belt' | 'mechanic_gloves' | 'none';
+export type CharacterFacialHair = 'clean' | 'stubble' | 'beard' | 'goatee' | 'mustache';
+export type CharacterClothing = 'mechanic_overalls' | 'leather_jacket' | 'racing_hoodie' | 'tuner_tshirt';
+
+export interface CharacterCustomization {
+  name: string;
+  gender: CharacterGender;
+  race: CharacterRace;
+  bodyType: CharacterBodyType;
+  hairStyle: CharacterHairstyle;
+  hairColor: CharacterHairColor;
+  facialHair: CharacterFacialHair;
+  accessory: CharacterAccessory;
+  clothing: CharacterClothing;
+  clothingColor: string; // hex
+  pantsColor: string; // hex
+}
+
 export interface SaveSlot {
   id: string;
   title: string;
@@ -56,6 +79,7 @@ export interface SaveSlot {
   completionPercent: number;
   lastPlayed: string;
   isEmpty?: boolean;
+  character?: CharacterCustomization;
 }
 
 export type GraphicsPreset = 'low' | 'medium' | 'high' | 'ultra';
