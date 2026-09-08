@@ -222,7 +222,7 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
   const [gpsDistance, setGpsDistance] = useState<number>(0);
   const [closestPoi, setClosestPoi] = useState<WorldLocation | null>(null);
 
-  // Input state
+  // Input state (Keyboard)
   const inputRef = useRef({
     forward: false,
     backward: false,
@@ -231,6 +231,27 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
     sprint: false,
     handbrake: false,
   });
+
+  // Virtual Analog Joystick State & Refs
+  const joystickRef = useRef({ x: 0, y: 0, active: false });
+  const [joystickPos, setJoystickPos] = useState<{ x: number; y: number; active: boolean }>({
+    x: 0,
+    y: 0,
+    active: false,
+  });
+  const joystickContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // 360° Camera Look & Orbit State
+  const camAngleYaw = useRef<number>(0); // Horizontal look angle (radians)
+  const camAnglePitch = useRef<number>(0.24); // Vertical elevation pitch (radians)
+  const lookSwipeRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    lastX: number;
+    lastY: number;
+  }>({ active: false, pointerId: null, lastX: 0, lastY: 0 });
+  const timeSinceLastLookSwipe = useRef<number>(999);
+  const [hasSwipedLook, setHasSwipedLook] = useState<boolean>(false);
 
   // Positions & Physics references
   const playerPos = useRef(new THREE.Vector3(-25, 0.9, 0)); // Inside garage initially
@@ -377,6 +398,9 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
       if (dist < 5.5) {
         setControlMode('driving');
         soundFx.playStartEngine();
+        camAngleYaw.current = carAngle.current;
+        camAnglePitch.current = 0.22;
+        timeSinceLastLookSwipe.current = 999;
       }
     } else {
       setControlMode('on_foot');
@@ -387,6 +411,9 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
       );
       playerPos.current.copy(carPos.current).add(sideOffset);
       playerAngle.current = carAngle.current;
+      camAngleYaw.current = carAngle.current;
+      camAnglePitch.current = 0.25;
+      timeSinceLastLookSwipe.current = 999;
     }
   }, [controlMode]);
 
@@ -1314,18 +1341,28 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
 
         const maxSpeed = 44; // ~100 MPH
         const accel = 20;
-        const decel = 15;
+        const decel = 16;
         const turnSpeed = 2.6;
 
+        // Joystick inputs for driving (stickY: forward gas / backward brake, stickX: steering)
+        const stickGas = Math.max(0, joystickRef.current.y);
+        const stickBrake = Math.max(0, -joystickRef.current.y);
+        const stickSteer = joystickRef.current.x;
+
+        const isGas = inputRef.current.forward || stickGas > 0.12;
+        const isBrake = inputRef.current.backward || stickBrake > 0.12;
+
         // Acceleration / Braking
-        if (inputRef.current.forward) {
-          carSpeed.current = Math.min(carSpeed.current + accel * dt, maxSpeed);
+        if (isGas) {
+          const gasPower = Math.max(stickGas, inputRef.current.forward ? 1 : 0);
+          carSpeed.current = Math.min(carSpeed.current + accel * gasPower * dt, maxSpeed);
           if (flameMeshRef.current) flameMeshRef.current.visible = Math.random() > 0.8;
           brakeLightsRef.current.forEach((bl) => {
             (bl.material as THREE.MeshBasicMaterial).color.setHex(0x7f1d1d);
           });
-        } else if (inputRef.current.backward) {
-          carSpeed.current = Math.max(carSpeed.current - decel * dt, -14);
+        } else if (isBrake) {
+          const brakePower = Math.max(stickBrake, inputRef.current.backward ? 1 : 0);
+          carSpeed.current = Math.max(carSpeed.current - decel * brakePower * dt, -14);
           if (flameMeshRef.current) flameMeshRef.current.visible = false;
           // Glow bright red when braking / reversing
           brakeLightsRef.current.forEach((bl) => {
@@ -1339,14 +1376,16 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
           });
         }
 
-        // Steering
-        if (inputRef.current.left) {
-          carSteer.current = THREE.MathUtils.lerp(carSteer.current, 0.48, dt * 9);
+        // Steering (combine joystick analog steer with keyboard arrows/A-D)
+        let targetSteer = 0;
+        if (Math.abs(stickSteer) > 0.08) {
+          targetSteer = -stickSteer * 0.48;
+        } else if (inputRef.current.left) {
+          targetSteer = 0.48;
         } else if (inputRef.current.right) {
-          carSteer.current = THREE.MathUtils.lerp(carSteer.current, -0.48, dt * 9);
-        } else {
-          carSteer.current = THREE.MathUtils.lerp(carSteer.current, 0, dt * 11);
+          targetSteer = -0.48;
         }
+        carSteer.current = THREE.MathUtils.lerp(carSteer.current, targetSteer, dt * 10);
 
         // Apply turning when vehicle is moving
         if (Math.abs(carSpeed.current) > 0.2) {
@@ -1385,50 +1424,85 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
         setSpeedMph(mph);
         setRpm(850 + mph * 90);
 
-        // Chase Camera with smooth lerp
+        // Camera Orbit & Look in Vehicle Mode (supports 360° swipe on right side)
+        timeSinceLastLookSwipe.current += dt;
+        if (timeSinceLastLookSwipe.current > 1.8 && Math.abs(carSpeed.current) > 1.5) {
+          // Gently align camera behind car direction when cruising without swiping
+          let diff = (carAngle.current - camAngleYaw.current) % (Math.PI * 2);
+          if (diff > Math.PI) diff -= Math.PI * 2;
+          if (diff < -Math.PI) diff += Math.PI * 2;
+          camAngleYaw.current += diff * Math.min(1, dt * 2.6);
+        }
+
         if (cameraRef.current) {
-          const camDistance = 8.5;
-          const camHeight = 3.8;
-          const targetCamPos = new THREE.Vector3(
-            carPos.current.x - Math.sin(carAngle.current) * camDistance,
-            carPos.current.y + camHeight,
-            carPos.current.z - Math.cos(carAngle.current) * camDistance
+          const camDistance = 8.6;
+          const focusTarget = new THREE.Vector3(
+            carPos.current.x,
+            carPos.current.y + 1.1,
+            carPos.current.z
           );
-          cameraRef.current.position.lerp(targetCamPos, dt * 7.5);
+          const horizDist = camDistance * Math.cos(camAnglePitch.current);
+          const heightOffset = camDistance * Math.sin(camAnglePitch.current) + 1.2;
+
+          const targetCamPos = new THREE.Vector3(
+            focusTarget.x - Math.sin(camAngleYaw.current) * horizDist,
+            focusTarget.y + heightOffset,
+            focusTarget.z - Math.cos(camAngleYaw.current) * horizDist
+          );
+          cameraRef.current.position.lerp(targetCamPos, dt * 8.5);
           cameraRef.current.lookAt(
-            carPos.current.x + Math.sin(carAngle.current) * 3,
-            carPos.current.y + 1.2,
-            carPos.current.z + Math.cos(carAngle.current) * 3
+            focusTarget.x + Math.sin(carAngle.current) * 1.5,
+            focusTarget.y + 0.3,
+            focusTarget.z + Math.cos(carAngle.current) * 1.5
           );
         }
       } else {
         // ON-FOOT MODE PHYSICS
-        playerMeshRef.current!.visible = true;
+        playerMeshRef.current!.visible = perspective !== 'fps';
 
-        const walkSpeed = inputRef.current.sprint ? 9.5 : 5.4;
-        let moveX = 0;
-        let moveZ = 0;
+        // Analog Joystick + Keyboard WASD
+        const stickX = joystickRef.current.x; // -1 to 1 (left to right)
+        const stickY = joystickRef.current.y; // -1 to 1 (backward to forward)
 
-        if (inputRef.current.forward) moveZ += 1;
-        if (inputRef.current.backward) moveZ -= 1;
-        if (inputRef.current.left) moveX += 1;
-        if (inputRef.current.right) moveX -= 1;
+        let keyX = 0;
+        let keyZ = 0;
+        if (inputRef.current.forward) keyZ += 1;
+        if (inputRef.current.backward) keyZ -= 1;
+        if (inputRef.current.left) keyX -= 1;
+        if (inputRef.current.right) keyX += 1;
 
-        const isMoving = moveX !== 0 || moveZ !== 0;
+        let inputX = stickX + keyX;
+        let inputZ = stickY + keyZ;
+        const inputMag = Math.hypot(inputX, inputZ);
+        if (inputMag > 1) {
+          inputX /= inputMag;
+          inputZ /= inputMag;
+        }
+        const mag = Math.min(1, inputMag);
+        const isMoving = mag > 0.08;
 
         if (isMoving) {
           footstepTimer += dt;
-          if (footstepTimer > (inputRef.current.sprint ? 0.28 : 0.42)) {
+          if (footstepTimer > (inputRef.current.sprint || mag > 0.82 ? 0.26 : 0.4)) {
             soundFx.playFootstep();
             footstepTimer = 0;
           }
 
-          const angle = Math.atan2(moveX, moveZ);
-          playerAngle.current = THREE.MathUtils.lerp(playerAngle.current, angle, dt * 14);
+          // Camera-Relative Movement:
+          // Pushing joystick forward moves character in the direction camera yaw is facing!
+          const camYaw = camAngleYaw.current;
+          const moveX = Math.sin(camYaw) * inputZ + Math.cos(camYaw) * inputX;
+          const moveZ = Math.cos(camYaw) * inputZ - Math.sin(camYaw) * inputX;
 
-          const speed = walkSpeed;
-          playerPos.current.x += Math.sin(angle) * speed * dt;
-          playerPos.current.z += Math.cos(angle) * speed * dt;
+          const targetAngle = Math.atan2(moveX, moveZ);
+          let angleDiff = (targetAngle - playerAngle.current) % (Math.PI * 2);
+          if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          playerAngle.current += angleDiff * Math.min(1, dt * 14);
+
+          const speed = (inputRef.current.sprint || mag > 0.82) ? 9.5 * mag : 5.4 * mag;
+          playerPos.current.x += moveX * speed * dt;
+          playerPos.current.z += moveZ * speed * dt;
 
           playerPos.current.x = THREE.MathUtils.clamp(playerPos.current.x, -140, 140);
           playerPos.current.z = THREE.MathUtils.clamp(playerPos.current.z, -140, 140);
@@ -1439,41 +1513,44 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
           playerMeshRef.current.rotation.y = playerAngle.current;
         }
 
-        // Camera for On-Foot (FPS vs 3rd Person)
+        // Camera for On-Foot (FPS vs 3rd Person, rotated by right-side swipe look)
         if (cameraRef.current) {
           if (perspective === 'fps') {
             cameraRef.current.position.set(
               playerPos.current.x,
-              playerPos.current.y + 0.62,
+              playerPos.current.y + 1.48,
               playerPos.current.z
             );
-            const lookTarget = new THREE.Vector3(
-              playerPos.current.x + Math.sin(playerAngle.current) * 6,
-              playerPos.current.y + 0.62,
-              playerPos.current.z + Math.cos(playerAngle.current) * 6
+            const lookForward = new THREE.Vector3(
+              Math.sin(camAngleYaw.current) * Math.cos(camAnglePitch.current),
+              -Math.sin(camAnglePitch.current),
+              Math.cos(camAngleYaw.current) * Math.cos(camAnglePitch.current)
             );
-            cameraRef.current.lookAt(lookTarget);
+            cameraRef.current.lookAt(cameraRef.current.position.clone().add(lookForward));
           } else {
-            const camDistance = 4.6;
-            const camHeight = 2.9;
-            const targetCamPos = new THREE.Vector3(
-              playerPos.current.x - Math.sin(playerAngle.current) * camDistance,
-              playerPos.current.y + camHeight,
-              playerPos.current.z - Math.cos(playerAngle.current) * camDistance
-            );
-            cameraRef.current.position.lerp(targetCamPos, dt * 8);
-            cameraRef.current.lookAt(
+            const camDistance = 4.8;
+            const focusTarget = new THREE.Vector3(
               playerPos.current.x,
-              playerPos.current.y + 1.2,
+              playerPos.current.y + 1.25,
               playerPos.current.z
             );
+            const horizDist = camDistance * Math.cos(camAnglePitch.current);
+            const heightOffset = camDistance * Math.sin(camAnglePitch.current) + 0.3;
+
+            const targetCamPos = new THREE.Vector3(
+              focusTarget.x - Math.sin(camAngleYaw.current) * horizDist,
+              focusTarget.y + heightOffset,
+              focusTarget.z - Math.cos(camAngleYaw.current) * horizDist
+            );
+            cameraRef.current.position.lerp(targetCamPos, Math.min(1, dt * 12));
+            cameraRef.current.lookAt(focusTarget);
           }
         }
       }
 
       // Check proximity and calculate closest destination for GPS / Radar
       const currentPos = controlMode === 'driving' ? carPos.current : playerPos.current;
-      const currentHeading = controlMode === 'driving' ? carAngle.current : playerAngle.current;
+      const currentHeading = camAngleYaw.current; // Minimap rotates to match camera look direction
       setRadarRotation(-currentHeading * (180 / Math.PI));
 
       // 1. Check proximity to car when on foot
@@ -1581,6 +1658,106 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
     inputRef.current[key] = state;
   };
 
+  // Right-Side Screen Swipe Camera Look Handlers
+  const handleLookPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    lookSwipeRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      lastX: e.clientX,
+      lastY: e.clientY,
+    };
+    timeSinceLastLookSwipe.current = 0;
+    if (!hasSwipedLook) setHasSwipedLook(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleLookPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!lookSwipeRef.current.active || lookSwipeRef.current.pointerId !== e.pointerId) return;
+    const dx = e.clientX - lookSwipeRef.current.lastX;
+    const dy = e.clientY - lookSwipeRef.current.lastY;
+    lookSwipeRef.current.lastX = e.clientX;
+    lookSwipeRef.current.lastY = e.clientY;
+    timeSinceLastLookSwipe.current = 0;
+
+    const sensitivity = 0.0055;
+    camAngleYaw.current -= dx * sensitivity;
+    // Swiping finger down increases pitch (higher elevation view), swiping up lowers pitch
+    camAnglePitch.current = THREE.MathUtils.clamp(
+      camAnglePitch.current + dy * sensitivity,
+      -0.18,
+      1.15
+    );
+  };
+
+  const handleLookPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (lookSwipeRef.current.pointerId === e.pointerId) {
+      lookSwipeRef.current.active = false;
+      lookSwipeRef.current.pointerId = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  // Virtual Analog Joystick Handlers
+  const handleJoystickDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    updateJoystick(e.clientX, e.clientY);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleJoystickMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!joystickRef.current.active) return;
+    e.stopPropagation();
+    updateJoystick(e.clientX, e.clientY);
+  };
+
+  const handleJoystickUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    joystickRef.current = { x: 0, y: 0, active: false };
+    setJoystickPos({ x: 0, y: 0, active: false });
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const updateJoystick = (clientX: number, clientY: number) => {
+    if (!joystickContainerRef.current) return;
+    const rect = joystickContainerRef.current.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const dx = clientX - centerX;
+    const dy = clientY - centerY;
+    const dist = Math.hypot(dx, dy);
+    const maxRadius = rect.width * 0.38;
+
+    const clampedDist = Math.min(dist, maxRadius);
+    const angle = Math.atan2(dy, dx);
+
+    const knobX = Math.cos(angle) * clampedDist;
+    const knobY = Math.sin(angle) * clampedDist;
+
+    // Output normalized values: -1 to 1
+    // normX: -1 (left) to 1 (right)
+    // normY: 1 (forward/up) to -1 (backward/down)
+    let normX = knobX / maxRadius;
+    let normY = -knobY / maxRadius;
+
+    // Center deadzone
+    if (dist < 6) {
+      normX = 0;
+      normY = 0;
+    }
+
+    joystickRef.current = { x: normX, y: normY, active: true };
+    setJoystickPos({ x: knobX, y: knobY, active: true });
+  };
+
   // Current entity position for minimap rendering
   const activeEntityPos = controlMode === 'driving' ? carPos.current : playerPos.current;
 
@@ -1588,6 +1765,24 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
     <div className="relative w-full h-full select-none overflow-hidden bg-black flex flex-col">
       {/* 3D WebGL Canvas Container */}
       <div ref={containerRef} className="w-full h-full absolute inset-0 z-0" />
+
+      {/* RIGHT-SIDE CAMERA LOOK SWIPE ZONE (Drag/swipe anywhere on right half to look around 360°) */}
+      <div
+        onPointerDown={handleLookPointerDown}
+        onPointerMove={handleLookPointerMove}
+        onPointerUp={handleLookPointerUp}
+        onPointerCancel={handleLookPointerUp}
+        className="absolute top-0 right-0 w-1/2 h-full z-10 touch-none select-none cursor-grab active:cursor-grabbing flex items-center justify-end pr-8 pointer-events-auto"
+        title="Swipe right side to look around"
+      >
+        {/* Subtle visual onboarding hint when not yet swiped */}
+        {!hasSwipedLook && (
+          <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-zinc-400 text-[11px] font-tech flex items-center gap-2 pointer-events-none animate-pulse">
+            <Compass size={14} className="text-amber-400" />
+            <span>Swipe here to look ↺</span>
+          </div>
+        )}
+      </div>
 
       {/* TOP HUD: Location, Bankroll, Atmosphere Preset, & Perspective Toggle */}
       <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
@@ -1689,33 +1884,32 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
         </div>
       )}
 
-      {/* GTA V-STYLE CIRCULAR RADAR MINIMAP (BOTTOM-LEFT HUD) */}
-      <div className="absolute bottom-24 sm:bottom-6 left-3 sm:left-6 z-20 pointer-events-none select-none">
-        <div className="relative w-36 h-36 sm:w-44 sm:h-44 rounded-full border-2 border-zinc-700/80 bg-zinc-950/85 backdrop-blur-md overflow-hidden shadow-2xl">
+      {/* GTA V-STYLE CIRCULAR RADAR MINIMAP (TOP-LEFT HUD DOCKED UNDER LOCATION BADGE) */}
+      <div className="absolute top-16 left-3 sm:left-4 z-20 pointer-events-none select-none">
+        <div className="relative w-28 h-28 sm:w-34 sm:h-34 rounded-full border-2 border-zinc-700/80 bg-zinc-950/85 backdrop-blur-md overflow-hidden shadow-2xl">
           {/* Rotating Map Layer */}
           <div
             className="absolute inset-0 transition-transform duration-75 origin-center"
             style={{ transform: `rotate(${radarRotation}deg)` }}
           >
             {/* North-South Main Highway Line */}
-            <div className="absolute left-1/2 top-0 bottom-0 w-3 -translate-x-1/2 bg-zinc-700/60" />
+            <div className="absolute left-1/2 top-0 bottom-0 w-2.5 -translate-x-1/2 bg-zinc-700/60" />
 
             {/* East-West Cross Boulevard Lines */}
-            <div className="absolute top-1/4 left-0 right-0 h-2.5 bg-zinc-700/60" />
-            <div className="absolute top-1/2 left-0 right-0 h-2.5 bg-zinc-700/60" />
-            <div className="absolute top-3/4 left-0 right-0 h-2.5 bg-zinc-700/60" />
+            <div className="absolute top-1/4 left-0 right-0 h-2 bg-zinc-700/60" />
+            <div className="absolute top-1/2 left-0 right-0 h-2 bg-zinc-700/60" />
+            <div className="absolute top-3/4 left-0 right-0 h-2 bg-zinc-700/60" />
 
             {/* POI Blips on Radar */}
             {locations.map((loc) => {
-              // Convert 3D world pos relative to player pos into radar px offset
-              const scale = 0.55; // pixels per world unit
+              const scale = 0.45; // pixels per world unit
               const dx = (loc.pos.x - activeEntityPos.x) * scale;
               const dz = (loc.pos.z - activeEntityPos.z) * scale;
 
               return (
                 <div
                   key={loc.id}
-                  className="absolute w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow-md flex items-center justify-center font-bold text-[8px]"
+                  className="absolute w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white shadow-md flex items-center justify-center font-bold text-[7px]"
                   style={{
                     left: `calc(50% + ${dx}px)`,
                     top: `calc(50% + ${dz}px)`,
@@ -1727,9 +1921,9 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
             })}
           </div>
 
-          {/* Fixed Player / Vehicle Compass Arrow in center */}
+          {/* Fixed Compass Indicator in center */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
-            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[14px] border-b-amber-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" />
+            <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[12px] border-b-amber-400 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" />
           </div>
 
           {/* North Compass Indicator on rim */}
@@ -1745,7 +1939,7 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
 
         {/* GPS Route Destination Tag */}
         {closestPoi && (
-          <div className="mt-1.5 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-zinc-800 text-[10px] font-tech text-zinc-300 flex items-center justify-between w-36 sm:w-44">
+          <div className="mt-1 bg-black/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-zinc-800 text-[9px] font-tech text-zinc-300 flex items-center justify-between w-28 sm:w-34 shadow-lg">
             <span className="truncate">{closestPoi.name}</span>
             <span className="font-bold text-amber-400 shrink-0 ml-1">{gpsDistance}m</span>
           </div>
@@ -1754,23 +1948,23 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
 
       {/* DRIVING TELEMETRY & COCKPIT GAUGES (When in vehicle) */}
       {controlMode === 'driving' && (
-        <div className="absolute bottom-28 sm:bottom-6 left-44 sm:left-56 z-20 pointer-events-none">
-          <div className="bg-black/85 backdrop-blur-md px-4 py-3 rounded-2xl border border-zinc-800 shadow-2xl flex items-center gap-4">
+        <div className="absolute bottom-5 left-40 sm:left-48 z-20 pointer-events-none">
+          <div className="bg-black/85 backdrop-blur-md px-3.5 py-2.5 rounded-2xl border border-zinc-800 shadow-2xl flex items-center gap-3.5">
             <div className="text-center">
-              <div className="text-3xl sm:text-4xl font-black font-display text-amber-400 leading-none">
+              <div className="text-2xl sm:text-3xl font-black font-display text-amber-400 leading-none">
                 {speedMph}
               </div>
-              <div className="text-[10px] font-tech text-zinc-500 uppercase tracking-widest">MPH</div>
+              <div className="text-[9px] font-tech text-zinc-500 uppercase tracking-widest">MPH</div>
             </div>
 
-            <div className="h-10 w-px bg-zinc-800" />
+            <div className="h-9 w-px bg-zinc-800" />
 
             <div>
               <div className="text-xs font-bold font-tech text-zinc-300 flex items-center justify-between">
                 <span>{rpm} RPM</span>
                 <span className="text-[10px] text-zinc-500">4-SPEED</span>
               </div>
-              <div className="w-24 sm:w-32 h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
+              <div className="w-20 sm:w-28 h-2 bg-zinc-800 rounded-full mt-1.5 overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-emerald-500 via-amber-500 to-red-500"
                   style={{ width: `${Math.min(100, (rpm / 6800) * 100)}%` }}
@@ -1785,116 +1979,121 @@ export const OpenWorld3D: React.FC<OpenWorld3DProps> = ({
         </div>
       )}
 
-      {/* MOBILE / ON-SCREEN TOUCH CONTROLS (D-PAD & PEDALS) */}
-      <div className="absolute bottom-3 left-3 right-3 z-30 flex items-end justify-between pointer-events-none">
-        {/* Left Side: Steering / Walking D-Pad */}
-        <div className="pointer-events-auto grid grid-cols-3 gap-1.5 bg-black/60 backdrop-blur-md p-2 rounded-2xl border border-white/10 shadow-2xl">
-          <div />
-          <button
-            onPointerDown={() => setTouchInput('forward', true)}
-            onPointerUp={() => setTouchInput('forward', false)}
-            onPointerLeave={() => setTouchInput('forward', false)}
-            className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-zinc-800/90 active:bg-amber-500 text-zinc-200 active:text-black flex items-center justify-center cursor-pointer touch-none shadow-md"
-          >
-            <ArrowUp size={22} />
-          </button>
-          <div />
+      {/* VIRTUAL ANALOG JOYSTICK (BOTTOM-LEFT - REPLACES ARROWS) */}
+      <div className="absolute bottom-5 left-5 z-30 pointer-events-auto flex flex-col items-center">
+        <div
+          ref={joystickContainerRef}
+          onPointerDown={handleJoystickDown}
+          onPointerMove={handleJoystickMove}
+          onPointerUp={handleJoystickUp}
+          onPointerCancel={handleJoystickUp}
+          className="relative w-32 h-32 sm:w-36 sm:h-36 rounded-full bg-black/70 backdrop-blur-md border-2 border-amber-500/40 shadow-2xl touch-none select-none flex items-center justify-center cursor-pointer"
+          title="Virtual Movement Joystick"
+        >
+          {/* Outer Guide Ring */}
+          <div className="absolute inset-2.5 rounded-full border border-white/10 pointer-events-none" />
+          <div className="absolute inset-6 rounded-full border border-amber-500/15 pointer-events-none" />
 
-          <button
-            onPointerDown={() => setTouchInput('left', true)}
-            onPointerUp={() => setTouchInput('left', false)}
-            onPointerLeave={() => setTouchInput('left', false)}
-            className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-zinc-800/90 active:bg-amber-500 text-zinc-200 active:text-black flex items-center justify-center cursor-pointer touch-none shadow-md"
-          >
-            <ArrowLeft size={22} />
-          </button>
+          {/* 4-Way Compass Cardinal Pointers */}
+          <div className="absolute top-1.5 w-1 h-2 bg-amber-400/70 rounded-full pointer-events-none" />
+          <div className="absolute bottom-1.5 w-1 h-2 bg-amber-400/70 rounded-full pointer-events-none" />
+          <div className="absolute left-1.5 h-1 w-2 bg-amber-400/70 rounded-full pointer-events-none" />
+          <div className="absolute right-1.5 h-1 w-2 bg-amber-400/70 rounded-full pointer-events-none" />
 
-          <button
-            onPointerDown={() => setTouchInput('backward', true)}
-            onPointerUp={() => setTouchInput('backward', false)}
-            onPointerLeave={() => setTouchInput('backward', false)}
-            className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-zinc-800/90 active:bg-amber-500 text-zinc-200 active:text-black flex items-center justify-center cursor-pointer touch-none shadow-md"
-          >
-            <ArrowDown size={22} />
-          </button>
+          {/* Center deadzone indicator */}
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-500/30 pointer-events-none" />
 
-          <button
-            onPointerDown={() => setTouchInput('right', true)}
-            onPointerUp={() => setTouchInput('right', false)}
-            onPointerLeave={() => setTouchInput('right', false)}
-            className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-zinc-800/90 active:bg-amber-500 text-zinc-200 active:text-black flex items-center justify-center cursor-pointer touch-none shadow-md"
+          {/* Dynamic Joystick Thumb Stick */}
+          <div
+            className="absolute w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 shadow-xl border-2 border-amber-200 flex items-center justify-center pointer-events-none"
+            style={{
+              transform: `translate(${joystickPos.x}px, ${joystickPos.y}px)`,
+              transition: joystickPos.active ? 'none' : 'transform 0.15s cubic-bezier(0.2, 0.9, 0.3, 1.2)',
+              boxShadow: joystickPos.active
+                ? '0 0 24px rgba(245, 158, 11, 0.85), inset 0 2px 4px rgba(255,255,255,0.6)'
+                : '0 4px 14px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.4)',
+            }}
           >
-            <ArrowRight size={22} />
-          </button>
+            <div className="w-6 h-6 rounded-full bg-amber-800/60 border border-amber-300/50 flex items-center justify-center">
+              <div className="w-2.5 h-2.5 rounded-full bg-white/90 shadow-sm" />
+            </div>
+          </div>
         </div>
 
-        {/* Right Side: Vehicle Action & Pedals */}
-        <div className="pointer-events-auto flex items-end gap-2">
-          {/* Enter / Exit Vehicle Button */}
-          <button
-            onClick={toggleVehicle}
-            className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex flex-col items-center justify-center gap-0.5 font-display font-black text-[10px] sm:text-xs uppercase shadow-2xl transition-all cursor-pointer border-2 ${
-              controlMode === 'driving'
-                ? 'bg-red-600 hover:bg-red-500 text-white border-red-400'
-                : 'bg-gradient-to-br from-amber-500 to-orange-500 text-black border-amber-300 animate-pulse'
-            }`}
-            title="Enter or Exit Vehicle"
-          >
-            <Car size={22} />
-            <span>{controlMode === 'driving' ? 'EXIT' : 'DRIVE'}</span>
-          </button>
-
-          {/* If driving: Gas & Brake Pedals */}
-          {controlMode === 'driving' ? (
-            <div className="flex gap-2">
-              <button
-                onPointerDown={() => setTouchInput('backward', true)}
-                onPointerUp={() => setTouchInput('backward', false)}
-                onPointerLeave={() => setTouchInput('backward', false)}
-                className="w-13 h-16 sm:w-16 sm:h-20 rounded-2xl bg-zinc-800 active:bg-red-600 text-zinc-300 active:text-white font-display font-black text-xs uppercase flex flex-col items-center justify-center border border-zinc-700 cursor-pointer touch-none shadow-lg"
-              >
-                BRAKE
-              </button>
-
-              <button
-                onPointerDown={() => setTouchInput('forward', true)}
-                onPointerUp={() => setTouchInput('forward', false)}
-                onPointerLeave={() => setTouchInput('forward', false)}
-                className="w-15 h-18 sm:w-18 sm:h-22 rounded-2xl bg-gradient-to-t from-emerald-600 to-emerald-500 active:from-emerald-400 active:to-emerald-300 text-black font-display font-black text-xs uppercase flex flex-col items-center justify-center shadow-2xl shadow-emerald-500/30 cursor-pointer touch-none border border-emerald-400"
-              >
-                GAS
-              </button>
-            </div>
-          ) : (
-            /* If on foot: Sprint & Interact buttons */
-            <div className="flex gap-2">
-              <button
-                onPointerDown={() => setTouchInput('sprint', true)}
-                onPointerUp={() => setTouchInput('sprint', false)}
-                onPointerLeave={() => setTouchInput('sprint', false)}
-                className="w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-zinc-800 active:bg-cyan-600 text-zinc-300 font-display font-bold text-[10px] uppercase flex flex-col items-center justify-center border border-zinc-700 cursor-pointer touch-none shadow-lg"
-              >
-                <Footprints size={20} />
-                RUN
-              </button>
-
-              {activePrompt && (
-                <button
-                  onClick={activePrompt.action}
-                  className="w-15 h-15 sm:w-16 sm:h-16 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-display font-black text-xs uppercase flex flex-col items-center justify-center shadow-2xl shadow-amber-500/40 cursor-pointer animate-pulse border-2 border-amber-300"
-                >
-                  USE
-                </button>
-              )}
-            </div>
-          )}
+        <div className="mt-1 text-center text-[10px] font-tech text-zinc-400 tracking-wider uppercase font-semibold">
+          MOVE
         </div>
       </div>
 
-      {/* Mini Radar / Compass at bottom center (Desktop Keyboard Legend) */}
+      {/* BOTTOM-RIGHT ACTION BUTTONS & VEHICLE PEDALS */}
+      <div
+        className="absolute bottom-5 right-5 z-30 pointer-events-auto flex items-end gap-2"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        {/* Enter / Exit Vehicle Button */}
+        <button
+          onClick={toggleVehicle}
+          className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex flex-col items-center justify-center gap-0.5 font-display font-black text-[10px] sm:text-xs uppercase shadow-2xl transition-all cursor-pointer border-2 ${
+            controlMode === 'driving'
+              ? 'bg-red-600 hover:bg-red-500 text-white border-red-400'
+              : 'bg-gradient-to-br from-amber-500 to-orange-500 text-black border-amber-300 animate-pulse'
+          }`}
+          title="Enter or Exit Vehicle (F)"
+        >
+          <Car size={22} />
+          <span>{controlMode === 'driving' ? 'EXIT' : 'DRIVE'}</span>
+        </button>
+
+        {/* If driving: Gas & Brake Pedals */}
+        {controlMode === 'driving' ? (
+          <div className="flex gap-2">
+            <button
+              onPointerDown={() => setTouchInput('backward', true)}
+              onPointerUp={() => setTouchInput('backward', false)}
+              onPointerLeave={() => setTouchInput('backward', false)}
+              className="w-13 h-16 sm:w-16 sm:h-20 rounded-2xl bg-zinc-800 active:bg-red-600 text-zinc-300 active:text-white font-display font-black text-xs uppercase flex flex-col items-center justify-center border border-zinc-700 cursor-pointer touch-none shadow-lg"
+            >
+              BRAKE
+            </button>
+
+            <button
+              onPointerDown={() => setTouchInput('forward', true)}
+              onPointerUp={() => setTouchInput('forward', false)}
+              onPointerLeave={() => setTouchInput('forward', false)}
+              className="w-15 h-18 sm:w-18 sm:h-22 rounded-2xl bg-gradient-to-t from-emerald-600 to-emerald-500 active:from-emerald-400 active:to-emerald-300 text-black font-display font-black text-xs uppercase flex flex-col items-center justify-center shadow-2xl shadow-emerald-500/30 cursor-pointer touch-none border border-emerald-400"
+            >
+              GAS
+            </button>
+          </div>
+        ) : (
+          /* If on foot: Sprint & Interact buttons */
+          <div className="flex gap-2">
+            <button
+              onPointerDown={() => setTouchInput('sprint', true)}
+              onPointerUp={() => setTouchInput('sprint', false)}
+              onPointerLeave={() => setTouchInput('sprint', false)}
+              className="w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-zinc-800 active:bg-cyan-600 text-zinc-300 font-display font-bold text-[10px] uppercase flex flex-col items-center justify-center border border-zinc-700 cursor-pointer touch-none shadow-lg"
+            >
+              <Footprints size={20} />
+              RUN
+            </button>
+
+            {activePrompt && (
+              <button
+                onClick={activePrompt.action}
+                className="w-15 h-15 sm:w-16 sm:h-16 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-display font-black text-xs uppercase flex flex-col items-center justify-center shadow-2xl shadow-amber-500/40 cursor-pointer animate-pulse border-2 border-amber-300"
+              >
+                USE
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Mini Legend at bottom center */}
       <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 z-10 pointer-events-none hidden md:flex items-center gap-2 bg-black/75 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/10 text-[11px] font-tech text-zinc-400 shadow-lg">
         <Compass size={13} className="text-amber-400" />
-        <span>WASD: Move / Steer • F: Enter/Exit Hot Rod • E: Interact • Space: Handbrake • H: Horn</span>
+        <span>Left Joystick / WASD: Move • Swipe Right Screen: 360° Camera Look • F: Drive/Exit • E: Interact</span>
       </div>
     </div>
   );
